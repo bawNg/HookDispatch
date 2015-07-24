@@ -22,6 +22,7 @@ namespace HookDispatch
                 public string Name;
                 public Dictionary<char, Node> Edges = new Dictionary<char, Node>();
                 public Node Parent;
+                public Instruction FirstInstruction;
             }
 
             private ModuleDefinition module;
@@ -30,8 +31,7 @@ namespace HookDispatch
             private Mono.Cecil.Cil.MethodBody body;
             private Instruction endInstruction;
 
-            private List<Instruction> firstNodeInstructions = new List<Instruction>();
-            private Dictionary<int, Instruction> jumpToNextEdgePlaceholders = new Dictionary<int, Instruction>();
+            private Dictionary<Instruction, Node> jumpToEdgePlaceholderTargets = new Dictionary<Instruction, Node>();
             private List<Instruction> jumpToEndPlaceholders = new List<Instruction>();
 
             private Dictionary<string, MethodDefinition> hookMethods = new Dictionary<string, MethodDefinition>();
@@ -119,10 +119,9 @@ namespace HookDispatch
                 // No valid method was found
                 endInstruction = Return(false);
                 
-                foreach (var i in jumpToNextEdgePlaceholders.Keys)
+                foreach (var instruction in jumpToEdgePlaceholderTargets.Keys)
                 {
-                    var instruction = jumpToNextEdgePlaceholders[i];
-                    instruction.Operand = i < firstNodeInstructions.Count ? firstNodeInstructions[i] : endInstruction;
+                    instruction.Operand = jumpToEdgePlaceholderTargets[instruction].FirstInstruction;
                 }
 
                 foreach (var instruction in jumpToEndPlaceholders)
@@ -134,9 +133,9 @@ namespace HookDispatch
 
                 body.OptimizeMacros();
 
-                foreach (var i in jumpToNextEdgePlaceholders.Keys)
+                foreach (var instruction in jumpToEdgePlaceholderTargets.Keys)
                 {
-                    Puts($"Jump {i}: {jumpToNextEdgePlaceholders[i]}");
+                    Puts($"Jump: {instruction}");
                 }
 
                 foreach (var instruction in jumpToEndPlaceholders)
@@ -154,17 +153,29 @@ namespace HookDispatch
 
             private void BuildNode(Node node, int edge_number)
             {
-                Puts("BuildNode: " + node.Char + " (" + (int)node.Char + ")");
+                Puts($"BuildNode: {node.Char} ({(int)node.Char})");
 
                 // Check the char at the current position
-                firstNodeInstructions.Add(AddInstruction(OpCodes.Ldarg_1)); // method_name
+                node.FirstInstruction = AddInstruction(OpCodes.Ldarg_1);    // method_name
                 AddInstruction(OpCodes.Ldloc_1);                            // i
                 AddInstruction(OpCodes.Callvirt, getChars);                 // method_name[i]
                 AddInstruction(Ldc_I4_n(node.Char));
-                // If char does not match and there are no more edges to check, return false
-                if (node.Parent.Edges.Count <= edge_number) JumpToEnd();
 
-                // Method continuing with this char exist, increment position
+                if (node.Edges.Count == 0)
+                {
+                    if (node.Parent.Edges.Count > edge_number)
+                    {
+                        // If char does not match and there are more edges to check
+                        JumpToEdge(node.Parent.Edges.Values.ElementAt(edge_number));
+                    }
+                    else
+                    {
+                        // If char does not match and there are no more edges to check
+                        JumpToEnd();
+                    }
+                }
+
+                // Method continuing with this char exists, increment position
                 AddInstruction(OpCodes.Ldloc_1);
                 AddInstruction(OpCodes.Ldc_I4_1);
                 AddInstruction(OpCodes.Add);
@@ -176,7 +187,10 @@ namespace HookDispatch
                     AddInstruction(OpCodes.Ldloc_1);
                     AddInstruction(OpCodes.Ldloc_0);
                     // If the method name is longer than the current position
-                    JumpToNext();
+                    if (node.Edges.Count > 0)
+                        JumpToEdge(node.Edges.Values.First());
+                    else
+                        JumpToEnd();
 
                     // Method has been found, prepare to call method
                     AddInstruction(OpCodes.Ldarg_2);    // out object ret
@@ -210,10 +224,11 @@ namespace HookDispatch
                 AddInstruction(OpCodes.Ret);
                 return instruction;
             }
-            
-            private void JumpToNext()
+
+            private void JumpToEdge(Node node)
             {
-                jumpToNextEdgePlaceholders[firstNodeInstructions.Count] = AddInstruction(OpCodes.Bne_Un, body.Instructions[1]);
+                var instruction = AddInstruction(OpCodes.Bne_Un, body.Instructions[1]);
+                jumpToEdgePlaceholderTargets[instruction] = node;
             }
 
             private void JumpToEnd()
@@ -288,7 +303,7 @@ namespace HookDispatch
 
         static void Main(string[] args)
         {
-            var definition = AssemblyDefinition.ReadAssembly(@"D:\GitHub\HookDispatch\DebugPlugin\bin\Release\DebugPlugin.dll");
+            var definition = AssemblyDefinition.ReadAssembly(@"E:\git\HookDispatch\DebugPlugin\bin\Release\DebugPlugin.dll");
 
             var module = definition.MainModule;
             foreach (var type_definition in module.Types)
@@ -308,15 +323,6 @@ namespace HookDispatch
                         final_definition = AssemblyDefinition.ReadAssembly(stream);
                     }
                     
-                    Puts("\n================================ Written IL: ================================");
-                    var final_type = final_definition.MainModule.GetType("Oxide.Plugins.DebugPlugin");
-                    var final_method = final_type.Methods.First(m => m.Name == "DirectCallHook");
-                    foreach (var instruction in final_method.Body.Instructions)
-                    {
-                        Puts(instruction);
-                        if ((instruction.OpCode == OpCodes.Bne_Un || instruction.OpCode == OpCodes.Bne_Un_S) && instruction.Operand == null) Puts("                  ^ OPERAND IS MISSING");
-                    }
-
                     var assembly = Assembly.Load(patched_assembly);
 
                     var type = assembly.GetType("Oxide.Plugins.DebugPlugin");
@@ -327,12 +333,10 @@ namespace HookDispatch
                     }
 
                     var plugin = Activator.CreateInstance(type) as Plugin;
-
-                    object ret;
-                    try {
-                        plugin.DirectCallHook("OnMy", out ret, new[] { "test" });
-                        plugin.DirectCallHook("OnMy2", out ret, new[] { "test2" });
-                        plugin.DirectCallHook("OnYour", out ret, new[] { "test3" });
+                    
+                    try
+                    {
+                        RunBenchmark(plugin);
                     }
                     catch (Exception ex)
                     {
@@ -343,6 +347,43 @@ namespace HookDispatch
                     Console.ReadKey();
                 }
             }
+        }
+
+        static void RunBenchmark(Plugin plugin)
+        {
+            object ret;
+            var iterations = 100000;
+            var t = DateTime.Now;
+            for (var i = 0; i < iterations; i++)
+            {
+                plugin.DirectCallHook("OnMy", out ret, new[] { "test" });
+                plugin.DirectCallHook("OnMy2", out ret, new[] { "test2" });
+                plugin.DirectCallHook("OnMy3", out ret, new[] { "test3" });
+                plugin.DirectCallHook("OnMy4", out ret, new[] { "test4" });
+                plugin.DirectCallHook("OnMy5", out ret, new[] { "test5" });
+                plugin.DirectCallHook("OnMy6", out ret, new[] { "test6" });
+                plugin.DirectCallHook("OnMy7", out ret, new[] { "test7" });
+                plugin.DirectCallHook("OnMy8", out ret, new[] { "test8" });
+                plugin.DirectCallHook("OnMy9", out ret, new[] { "test9" });
+                plugin.DirectCallHook("OnYour", out ret, new[] { "test0" });
+            }
+            Puts($"Calling {10 * iterations} hooks directly took {DateTime.Now - t}");
+
+            t = DateTime.Now;
+            for (var i = 0; i < iterations; i++)
+            {
+                plugin.CallHook("OnMy", out ret, new[] { "test" });
+                plugin.CallHook("OnMy2", out ret, new[] { "test2" });
+                plugin.CallHook("OnMy3", out ret, new[] { "test3" });
+                plugin.CallHook("OnMy4", out ret, new[] { "test4" });
+                plugin.CallHook("OnMy5", out ret, new[] { "test5" });
+                plugin.CallHook("OnMy6", out ret, new[] { "test6" });
+                plugin.CallHook("OnMy7", out ret, new[] { "test7" });
+                plugin.CallHook("OnMy8", out ret, new[] { "test8" });
+                plugin.CallHook("OnMy9", out ret, new[] { "test9" });
+                plugin.CallHook("OnYour", out ret, new[] { "test0" });
+            }
+            Puts($"Calling {10 * iterations} hooks with Invoke took {DateTime.Now - t}");
         }
 
         static void Puts(object obj)

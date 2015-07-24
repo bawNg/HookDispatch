@@ -9,19 +9,53 @@ namespace Oxide.Plugins
     {
         object OnMy(string text)
         {
-            Console.WriteLine("HookMethod called: OnMy - " + text ?? "null");
+            //Console.WriteLine("HookMethod called: OnMy - " + text ?? "null");
             return null;
         }
 
-        /*object OnMy2(string text)
+        object OnMy2(string text)
         {
-            Console.WriteLine("HookMethod called: OnMy2 - " + text ?? "null");
             return null;
-        }*/
+        }
+
+        object OnMy3(string text)
+        {
+            return null;
+        }
+
+        object OnMy4(string text)
+        {
+            return null;
+        }
+
+        object OnMy5(string text)
+        {
+            return null;
+        }
+
+        object OnMy6(string text)
+        {
+            return null;
+        }
+
+        object OnMy7(string text)
+        {
+            return null;
+        }
+
+        object OnMy8(string text)
+        {
+            return null;
+        }
+
+        object OnMy9(string text)
+        {
+            return null;
+        }
 
         object OnYour(string text)
         {
-            Console.WriteLine("HookMethod called: OnYour - " + text ?? "null");
+            //Console.WriteLine("HookMethod called: OnYour - " + text ?? "null");
             return null;
         }
     }
