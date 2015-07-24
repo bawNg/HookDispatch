@@ -7,6 +7,7 @@ using Mono.Cecil.Cil;
 using Mono.Cecil;
 using System.IO;
 using System.Reflection;
+using Mono.Cecil.Rocks;
 using Oxide.Plugins;
 
 namespace HookDispatch
@@ -66,6 +67,7 @@ namespace HookDispatch
 
                 // Create new method body
                 body = new Mono.Cecil.Cil.MethodBody(method);
+                body.SimplifyMacros();
                 method.Body = body;
                 type.Methods.Add(method);
 
@@ -117,18 +119,28 @@ namespace HookDispatch
                 // No valid method was found
                 endInstruction = Return(false);
                 
-                UpdateInstructions();
-
                 foreach (var i in jumpToNextEdgePlaceholders.Keys)
                 {
                     var instruction = jumpToNextEdgePlaceholders[i];
-                    //instruction.Operand = i < firstNodeInstructions.Count ? firstNodeInstructions[i] : endInstruction;
-                    //Puts($"Jump {i}: {instruction}");
+                    instruction.Operand = i < firstNodeInstructions.Count ? firstNodeInstructions[i] : endInstruction;
                 }
 
                 foreach (var instruction in jumpToEndPlaceholders)
                 {
                     instruction.Operand = endInstruction;
+                }
+
+                //UpdateInstructions();
+
+                body.OptimizeMacros();
+
+                foreach (var i in jumpToNextEdgePlaceholders.Keys)
+                {
+                    Puts($"Jump {i}: {jumpToNextEdgePlaceholders[i]}");
+                }
+
+                foreach (var instruction in jumpToEndPlaceholders)
+                {
                     Puts($"Jump to end: {instruction}");
                 }
 
@@ -201,12 +213,12 @@ namespace HookDispatch
             
             private void JumpToNext()
             {
-                jumpToNextEdgePlaceholders[firstNodeInstructions.Count] = AddInstruction(OpCodes.Bne_Un_S, body.Instructions[1]);
+                jumpToNextEdgePlaceholders[firstNodeInstructions.Count] = AddInstruction(OpCodes.Bne_Un, body.Instructions[1]);
             }
 
             private void JumpToEnd()
             {
-                jumpToEndPlaceholders.Add(AddInstruction(OpCodes.Bne_Un_S, body.Instructions[0]));
+                jumpToEndPlaceholders.Add(AddInstruction(OpCodes.Bne_Un, body.Instructions[0]));
             }
 
             private Instruction AddInstruction(OpCode opcode)
@@ -276,7 +288,7 @@ namespace HookDispatch
 
         static void Main(string[] args)
         {
-            var definition = AssemblyDefinition.ReadAssembly(@"C:\Users\Windows 7\Documents\Visual Studio 2015\Projects\HookDispatch\DebugPlugin\bin\Release\DebugPlugin.dll");
+            var definition = AssemblyDefinition.ReadAssembly(@"D:\GitHub\HookDispatch\DebugPlugin\bin\Release\DebugPlugin.dll");
 
             var module = definition.MainModule;
             foreach (var type_definition in module.Types)
@@ -302,7 +314,7 @@ namespace HookDispatch
                     foreach (var instruction in final_method.Body.Instructions)
                     {
                         Puts(instruction);
-                        if (instruction.OpCode == OpCodes.Bne_Un_S && instruction.Operand == null) Puts("                  ^ OPERAND IS MISSING");
+                        if ((instruction.OpCode == OpCodes.Bne_Un || instruction.OpCode == OpCodes.Bne_Un_S) && instruction.Operand == null) Puts("                  ^ OPERAND IS MISSING");
                     }
 
                     var assembly = Assembly.Load(patched_assembly);
